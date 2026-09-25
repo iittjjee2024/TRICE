@@ -19,8 +19,10 @@ sys.path.insert(0, os.path.join(ROOT, "src"))
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-DATA = os.path.join(ROOT, "student_resource", "dataset")
-ART = os.path.join(ROOT, "artifacts")
+from trice.paths import artifacts_dir, dataset_dir  # noqa: E402
+
+DATA = dataset_dir(ROOT)
+ART = artifacts_dir(ROOT)
 STORE = os.path.join(ART, "store")
 
 

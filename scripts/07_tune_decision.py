@@ -33,8 +33,9 @@ from trice.decide import DecisionConfig, decide_groups          # noqa: E402
 from trice.evaluate import score_flat                           # noqa: E402
 from trice.graph import repair_disjointness                     # noqa: E402
 from trice.model import load_bundle, save_bundle                # noqa: E402
+from trice.paths import artifacts_dir                           # noqa: E402
 
-RUNS = os.path.join(ROOT, "artifacts", "runs")
+RUNS = os.path.join(artifacts_dir(ROOT), "runs")
 
 
 def log(m: str) -> None:

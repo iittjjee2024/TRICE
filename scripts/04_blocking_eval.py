@@ -30,8 +30,10 @@ from trice.blocking import (BlockingConfig, ChannelConfig, build_channel_index, 
                             label_candidates, query_channel, union_channels,
                             vocabulary_from_df)
 
-STORE = os.path.join(ROOT, "artifacts", "store")
-GT = os.path.join(ROOT, "student_resource", "dataset", "train", "train_ground_truth.tsv")
+from trice.paths import artifacts_dir, dataset_dir  # noqa: E402
+
+STORE = os.path.join(artifacts_dir(ROOT), "store")
+GT = os.path.join(dataset_dir(ROOT), "train", "train_ground_truth.tsv")
 COLS = ["num", "src", "country", "name_core", "name_skel", "name_nospace",
         "addr_alpha", "addr_digits", "postal", "house"]
 
@@ -269,7 +271,7 @@ def main() -> None:
               f"{r['positive_frac'] * 100:>6.2f} {r['queries_per_s']:>7.0f} "
               f"{1_732_544 / r['queries_per_s'] / 60:>9.0f}")
 
-    outdir = os.path.join(ROOT, "artifacts", "blocking")
+    outdir = os.path.join(artifacts_dir(ROOT), "blocking")
     os.makedirs(outdir, exist_ok=True)
     path = os.path.join(outdir, f"sweep_{args.country}_{args.sweep}.json")
     with open(path, "w", encoding="utf-8") as fh:

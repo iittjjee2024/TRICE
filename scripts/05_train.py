@@ -48,9 +48,11 @@ from trice.pipeline import (Candidates, MissingMassEstimator, attach_labels,  # 
                            load_partition, load_ground_truth_subset,
                            split_countries, truth_arrays)
 
-STORE = os.path.join(ROOT, "artifacts", "store")
-GT = os.path.join(ROOT, "student_resource", "dataset", "train", "train_ground_truth.tsv")
-RUNS = os.path.join(ROOT, "artifacts", "runs")
+from trice.paths import artifacts_dir, dataset_dir  # noqa: E402
+
+STORE = os.path.join(artifacts_dir(ROOT), "store")
+GT = os.path.join(dataset_dir(ROOT), "train", "train_ground_truth.tsv")
+RUNS = os.path.join(artifacts_dir(ROOT), "runs")
 
 T0 = time.time()
 

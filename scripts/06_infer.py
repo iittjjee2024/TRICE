@@ -49,10 +49,12 @@ from trice.pipeline import (Candidates, build_feature_matrix, compute_idf,     #
                            estimate_missing_mass, generate_candidates,
                            hash_codes, load_partition, split_countries)
 
-STORE = os.path.join(ROOT, "artifacts", "store")
-RUNS = os.path.join(ROOT, "artifacts", "runs")
-TEST_DIR = os.path.join(ROOT, "student_resource", "dataset", "test")
-OUTPUT = os.path.join(ROOT, "output")
+from trice.paths import artifacts_dir, dataset_dir, output_dir  # noqa: E402
+
+STORE = os.path.join(artifacts_dir(ROOT), "store")
+RUNS = os.path.join(artifacts_dir(ROOT), "runs")
+TEST_DIR = os.path.join(dataset_dir(ROOT), "test")
+OUTPUT = output_dir(ROOT)
 
 T0 = time.time()
 
@@ -71,7 +73,7 @@ def main() -> None:
     ap.add_argument("--prune-epsilon", type=float, default=0.01)
     ap.add_argument("--check-ids", action="store_true",
                     help="verify every emitted id exists in the test set (memory heavy)")
-    ap.add_argument("--scratch", default=os.path.join(ROOT, "artifacts", "scratch"),
+    ap.add_argument("--scratch", default=os.path.join(artifacts_dir(ROOT), "scratch"),
                     help="directory for the on-disk feature spill")
     args = ap.parse_args()
     scratch = args.scratch

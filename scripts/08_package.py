@@ -37,10 +37,11 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 from trice.export import read_entity_ids, validate_submission  # noqa: E402
+from trice.paths import dataset_dir, output_dir               # noqa: E402
 
 TEAM = "Vortex"
-OUTPUT = os.path.join(ROOT, "output")
-TEST_DIR = os.path.join(ROOT, "student_resource", "dataset", "test")
+OUTPUT = output_dir(ROOT)
+TEST_DIR = os.path.join(dataset_dir(ROOT), "test")
 
 # scripts that belong in the reproducible package (the workbench is excluded)
 PIPELINE_SCRIPTS = [

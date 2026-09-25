@@ -24,9 +24,10 @@ if hasattr(sys.stdout, "reconfigure"):
 
 from trice.mine import VariantMiner                       # noqa: E402
 from trice.normalize import normalize_address, normalize_name  # noqa: E402
+from trice.paths import artifacts_dir, dataset_dir        # noqa: E402
 
-DATA = os.path.join(ROOT, "student_resource", "dataset", "train")
-ART = os.path.join(ROOT, "artifacts")
+DATA = os.path.join(dataset_dir(ROOT), "train")
+ART = artifacts_dir(ROOT)
 
 
 def log(msg: str) -> None:
