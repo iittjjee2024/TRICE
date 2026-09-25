@@ -1,0 +1,39 @@
+# ---- datasets (2.3 GB; users download separately, see README) ----
+student_resource/dataset/
+*.tsv
+!output/*.tsv
+__MACOSX/
+*.DS_Store
+
+# ---- generated artifacts ----
+artifacts/store/
+artifacts/runs/
+artifacts/scratch/
+artifacts/output_*/
+artifacts/*.log
+artifacts/blocking/
+artifacts/variants.json
+
+# ---- submission archive ----
+*_submission.zip
+
+# ---- python ----
+backend/.venv/
+**/__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# ---- node / frontend ----
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+npm-debug.log*
+
+# ---- editor / os ----
+.vscode/
+.idea/
+*.swp
+Thumbs.db

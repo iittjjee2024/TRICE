@@ -1,0 +1,14 @@
+# Normalise line endings: store text as LF in the repo, check out native locally.
+* text=auto eol=lf
+*.py   text eol=lf
+*.ts   text eol=lf
+*.tsx  text eol=lf
+*.md   text eol=lf
+*.json text eol=lf
+*.css  text eol=lf
+*.ipynb text eol=lf
+# treat these as binary
+*.docx binary
+*.pdf  binary
+*.parquet binary
+*.png  binary
