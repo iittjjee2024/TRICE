@@ -3,6 +3,26 @@
 `trice_kaggle_runner.ipynb` runs the whole pipeline end to end inside a Kaggle notebook and
 writes the submittable `matching_results.tsv` to the notebook output.
 
+## Simplest option: one self-contained cell
+
+If the multi-cell notebook gets out of sync with the repo (a common Kaggle gotcha — the
+cells in the editor are a separate copy from the files the clone cell pulls), skip it and
+use **`one_cell_runner.py`** instead:
+
+1. New Kaggle notebook, attach the dataset via *Add Input*, Internet **On**, Accelerator
+   **None**.
+2. Open `kaggle/one_cell_runner.py` from this repo, copy its entire contents into a single
+   notebook cell, and run it.
+
+It clones the repo, finds the dataset however it was uploaded, wires paths, runs every
+stage, validates, and copies `matching_results.tsv` to the notebook Output. Because it is
+one cell with no dependencies on other cells, a stale notebook cannot cause errors. Set
+`SUBSET = 4000` at the top for a smoke run, `SUBSET = None` for the full submission.
+
+---
+
+## Multi-cell notebook
+
 ## One-time setup
 
 1. **New Notebook** on Kaggle (or *File → Import Notebook* and upload
