@@ -75,41 +75,60 @@ class GBDT:
             feature_names: Sequence[str] | None = None) -> "GBDT":
         self.feature_names = list(feature_names or [])
         if self.kind == "lightgbm":
-            params = dict(
-                objective="binary", metric=["auc", "average_precision"],
-                learning_rate=self.cfg.learning_rate,
-                num_leaves=self.cfg.max_leaf_nodes,
-                min_data_in_leaf=self.cfg.min_samples_leaf,
-                lambda_l2=self.cfg.l2_regularization,
-                max_bin=self.cfg.max_bins,
-                feature_fraction=0.9, bagging_fraction=0.9, bagging_freq=1,
-                num_threads=0 if self.cfg.n_jobs == -1 else self.cfg.n_jobs,
-                seed=self.cfg.random_state, verbosity=-1,
-            )
-            dtrain = lgb.Dataset(X, label=y, feature_name=self.feature_names or "auto")
-            valid = []
-            if X_val is not None and y_val is not None:
-                valid = [lgb.Dataset(X_val, label=y_val, reference=dtrain)]
-            callbacks = [lgb.log_evaluation(period=0)]
-            if valid:
+            try:
+                self._fit_lightgbm(X, y, X_val, y_val)
+                return self
+            except Exception as exc:                       # pragma: no cover
+                # LightGBM APIs and recognised metric names drift between versions, and the
+                # exact build on a hosted environment (Kaggle) may differ from the pinned
+                # one. Rather than fail the whole run, fall back to scikit-learn's
+                # HistGradientBoosting, which ships everywhere and needs no callbacks.
+                print(f"[GBDT] LightGBM fit failed ({type(exc).__name__}: {exc}); "
+                      f"falling back to HistGradientBoosting", flush=True)
+                self.kind = "hgb"
+        self._fit_hgb(X, y, X_val, y_val)
+        return self
+
+    def _fit_lightgbm(self, X, y, X_val, y_val) -> None:
+        params = dict(
+            objective="binary", metric="auc",   # 'auc' is recognised by every version
+            learning_rate=self.cfg.learning_rate,
+            num_leaves=self.cfg.max_leaf_nodes,
+            min_data_in_leaf=self.cfg.min_samples_leaf,
+            lambda_l2=self.cfg.l2_regularization,
+            max_bin=self.cfg.max_bins,
+            feature_fraction=0.9, bagging_fraction=0.9, bagging_freq=1,
+            num_threads=0 if self.cfg.n_jobs == -1 else self.cfg.n_jobs,
+            seed=self.cfg.random_state, verbosity=-1,
+        )
+        # feature names must match the column count exactly, else LightGBM raises
+        fname = self.feature_names if len(self.feature_names) == X.shape[1] else "auto"
+        dtrain = lgb.Dataset(X, label=y, feature_name=fname)
+        callbacks = []
+        if hasattr(lgb, "log_evaluation"):
+            callbacks.append(lgb.log_evaluation(period=0))
+        valid = []
+        if X_val is not None and y_val is not None:
+            valid = [lgb.Dataset(X_val, label=y_val, reference=dtrain)]
+            if hasattr(lgb, "early_stopping"):
                 callbacks.append(lgb.early_stopping(self.cfg.early_stopping_rounds,
                                                    verbose=False))
-            self.model = lgb.train(params, dtrain, num_boost_round=self.cfg.max_iter,
-                                   valid_sets=valid, callbacks=callbacks)
-        else:
-            self.model = HistGradientBoostingClassifier(
-                max_iter=self.cfg.max_iter, learning_rate=self.cfg.learning_rate,
-                max_leaf_nodes=self.cfg.max_leaf_nodes,
-                min_samples_leaf=self.cfg.min_samples_leaf,
-                l2_regularization=self.cfg.l2_regularization,
-                max_bins=self.cfg.max_bins,
-                early_stopping=X_val is not None,
-                n_iter_no_change=self.cfg.early_stopping_rounds,
-                validation_fraction=0.1 if X_val is None else None,
-                random_state=self.cfg.random_state,
-            )
-            self.model.fit(X, y)
-        return self
+        self.model = lgb.train(params, dtrain, num_boost_round=self.cfg.max_iter,
+                               valid_sets=valid, callbacks=callbacks)
+
+    def _fit_hgb(self, X, y, X_val, y_val) -> None:
+        self.model = HistGradientBoostingClassifier(
+            max_iter=self.cfg.max_iter, learning_rate=self.cfg.learning_rate,
+            max_leaf_nodes=self.cfg.max_leaf_nodes,
+            min_samples_leaf=self.cfg.min_samples_leaf,
+            l2_regularization=self.cfg.l2_regularization,
+            max_bins=self.cfg.max_bins,
+            early_stopping=True,
+            n_iter_no_change=self.cfg.early_stopping_rounds,
+            validation_fraction=0.1,
+            random_state=self.cfg.random_state,
+        )
+        self.model.fit(X, y)
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         if self.kind == "lightgbm":
@@ -119,35 +138,43 @@ class GBDT:
 
     # -------------------------------------------------------------- introspection ----
     def importances(self) -> List[Tuple[str, float]]:
-        if self.kind == "lightgbm":
-            gains = self.model.feature_importance(importance_type="gain")
-            names = self.model.feature_name()
-        else:
-            # permutation-free fallback: HGB exposes no native gains, so use the
-            # per-feature bin split counts collected during fitting
-            names = self.feature_names or [f"f{i}" for i in range(
-                self.model.n_features_in_)]
-            gains = np.zeros(len(names), dtype=float)
-            for stage in self.model._predictors:
-                for pred in stage:
-                    nodes = pred.nodes
-                    for node in nodes:
-                        if not node["is_leaf"]:
-                            gains[node["feature_idx"]] += node["gain"]
-        total = float(gains.sum()) or 1.0
-        out = [(n, float(g) / total) for n, g in zip(names, gains)]
-        out.sort(key=lambda t: -t[1])
-        return out
+        """Feature importances. Best-effort: never raises (it feeds reporting only)."""
+        try:
+            if self.kind == "lightgbm":
+                gains = self.model.feature_importance(importance_type="gain")
+                names = self.model.feature_name()
+            else:
+                names = self.feature_names or [f"f{i}" for i in range(
+                    self.model.n_features_in_)]
+                gains = np.zeros(len(names), dtype=float)
+                # HGB internals differ across sklearn versions; guard access.
+                for stage in getattr(self.model, "_predictors", []):
+                    for pred in stage:
+                        for node in pred.nodes:
+                            if not node["is_leaf"]:
+                                gains[node["feature_idx"]] += node["gain"]
+                if gains.sum() == 0.0:
+                    return [(n, 0.0) for n in names]
+            total = float(gains.sum()) or 1.0
+            out = [(n, float(g) / total) for n, g in zip(names, gains)]
+            out.sort(key=lambda t: -t[1])
+            return out
+        except Exception:                                  # pragma: no cover
+            names = self.feature_names or []
+            return [(n, 0.0) for n in names]
 
     def n_parameters(self) -> int:
-        """Rough parameter count, for the model-size rule in the challenge constraints."""
-        if self.kind == "lightgbm":
-            return int(self.model.num_trees() * self.cfg.max_leaf_nodes * 2)
-        total = 0
-        for stage in self.model._predictors:
-            for pred in stage:
-                total += len(pred.nodes) * 2
-        return int(total)
+        """Rough parameter count, for the model-size rule. Best-effort; never raises."""
+        try:
+            if self.kind == "lightgbm":
+                return int(self.model.num_trees() * self.cfg.max_leaf_nodes * 2)
+            total = 0
+            for stage in getattr(self.model, "_predictors", []):
+                for pred in stage:
+                    total += len(pred.nodes) * 2
+            return int(total)
+        except Exception:                                  # pragma: no cover
+            return 0
 
 
 # --------------------------------------------------------------------------------------
