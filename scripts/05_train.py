@@ -498,7 +498,8 @@ def main() -> None:
                 blocking=asdict(block_cfg), model_cfg=asdict(model_cfg),
                 graph_cfg=asdict(graph_cfg), decision=asdict(base_dec),
                 overall_blocking_recall=overall_recall,
-                missing_mass_model=mm, missing_mass_scale=best_scale)
+                missing_mass_model=mm, missing_mass_scale=best_scale,
+                missing_mass_variant=best_variant)
 
     imp1 = m1.importances()
     imp2 = m2.importances()
@@ -555,7 +556,11 @@ def main() -> None:
         block_score=cand_sorted.score[val_pair],
         entity_ids=entity_ids, entity_country=entity_country.astype(str),
         truth_sizes=truth_sizes, val_entity=val_ent,
-        missing_mass=miss.astype(np.float32),
+        # `miss` is None when the tuning chose to switch the missing-mass term OFF; save
+        # the fitted array anyway (the tuner offers it as a variant) plus a flag recording
+        # what was actually applied, so a None winner cannot crash the save.
+        missing_mass=(miss if miss is not None else miss_fitted).astype(np.float32),
+        missing_mass_applied=np.array([miss is not None]),
         missing_mass_heuristic=miss_heuristic.astype(np.float32),
         expected_truth=exp_T.astype(np.float32),
     )
