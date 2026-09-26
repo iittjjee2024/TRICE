@@ -273,8 +273,13 @@ that the calibrated probabilities need no shrinkage and the independence assumpt
 
 ## 5. Results & Error Analysis
 
-- **F_0.5 Score (macro):** **0.91698** on 34,866 held-out validation entities
-  (precision 0.95484, recall 0.84472, mean |S| 2.956).
+- **Leaderboard F_0.5 Score (macro):** **0.887** on the full 1,732,544-entity test set
+  (1,603,183 entities predicted with matches, 129,361 predicted singletons).
+- **F_0.5 Score (macro), held-out validation:** **0.91698** on 34,866 validation entities
+  (precision 0.95484, recall 0.84472, mean |S| 2.956). The validation → leaderboard gap
+  (0.917 → 0.887) is expected generalization on unseen data; the leaderboard submission
+  used the full-data model for the France and India partitions and the earlier-epoch model
+  for US, so a fully-consistent full-data inference pass is the primary remaining lever.
 
   | country | entities | macro F<sub>0.5</sub> |
   |---|---|---|

@@ -6,8 +6,29 @@ Match every Source-1 business record to the set of Source-2 / Source-3 records d
 the same real-world business — across **1.73 M** test entities and **~10 M** candidate
 records — scored by macro-averaged **F<sub>0.5</sub>**.
 
-> **Validation score: macro F<sub>0.5</sub> = 0.917** (precision 0.955, recall 0.845) on a
-> held-out split. Ships a runnable pipeline **and** a FastAPI + React analysis workbench.
+> **Leaderboard: macro F<sub>0.5</sub> = 0.887** on the full 1,732,544-entity test set.
+> **Held-out validation: macro F<sub>0.5</sub> = 0.917** (precision 0.955, recall 0.845).
+> Ships a runnable pipeline **and** a FastAPI + React analysis workbench.
+
+## Results
+
+| Metric | Value |
+|---|---|
+| **Leaderboard macro F<sub>0.5</sub>** (full test set) | **0.887** |
+| Validation macro F<sub>0.5</sub> (held-out) | 0.917 |
+| Validation precision / recall | 0.955 / 0.845 |
+| Test entities scored | 1,732,544 (1,603,183 with matches, 129,361 singletons) |
+| Blocking macro-recall ceiling | ≈ 0.88 |
+| Model | LightGBM GBDT, two stacked stages, ≈ 8 × 10<sup>4</sup> parameters |
+
+For reference, a `top-1` baseline scores ≈ 0.67 and a fixed `top-3` ≈ 0.75 on the same
+validation split; the exact expected-F<sub>0.5</sub> decision layer plus the graph
+competition/corroboration features are what carry it to 0.917. The small validation →
+leaderboard gap (0.917 → 0.887) is expected generalization on unseen test data; the
+leaderboard run additionally used the earlier-epoch model for the US partition (France and
+India used the full-data model), so a fully-consistent full-data inference pass is the most
+likely lever for a further gain. Recall — bounded by the ≈ 0.88 blocking ceiling — is now
+the binding constraint, not precision.
 
 ---
 
