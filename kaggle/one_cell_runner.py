@@ -42,24 +42,43 @@ REQUIRED = [("train", "train_source1.tsv"), ("train", "train_source2.tsv"),
             ("test", "test_source3.tsv")]
 
 
+def _is_junk(path):
+    """Skip macOS AppleDouble sidecars ('._name') and __MACOSX entries.
+
+    A dataset zipped on a Mac carries a tiny '._train_source1.tsv' resource-fork file
+    (~254 bytes of 'Mac OS X ... com.apple.quarantine' metadata) next to each real file.
+    Matching one of those instead of the ~200 MB data file is the failure this guards.
+    """
+    base = os.path.basename(path)
+    return base.startswith("._") or "__MACOSX" in path.replace("\\", "/").split("/")
+
+
 def _norm(name):
-    return os.path.basename(name).lower().lstrip("._- ")
+    # strip only leading punctuation that is NOT the AppleDouble marker (handled above)
+    return os.path.basename(name).lower().lstrip("-_ ")
 
 
 all_tsv = [os.path.join(r, f) for r, _d, fs in os.walk("/kaggle/input")
-           for f in fs if f.lower().endswith(".tsv")]
+           for f in fs if f.lower().endswith(".tsv") and not _is_junk(os.path.join(r, f))]
 found = {}
 for split, fname in REQUIRED:
-    hits = [p for p in all_tsv if _norm(p) == fname.lower()]
+    # prefer an EXACT basename match; fall back to the normalised stem
+    exact = [p for p in all_tsv if os.path.basename(p).lower() == fname.lower()]
+    hits = exact or [p for p in all_tsv if _norm(p) == fname.lower()]
+    # a real source file is megabytes; never accept a tiny sidecar that slipped through
+    hits = [p for p in hits if os.path.getsize(p) > 1024] or hits
     if hits:
-        found[(split, fname)] = sorted(hits, key=len)[0]
+        found[(split, fname)] = sorted(hits, key=os.path.getsize, reverse=True)[0]
 missing = [f"{s}/{f}" for (s, f) in REQUIRED if (s, f) not in found]
 if missing:
     print("MISSING:", missing)
-    print("tsv files seen under /kaggle/input:")
+    print("tsv files seen under /kaggle/input (excluding macOS sidecars):")
     for p in all_tsv:
-        print("  ", p)
+        print("  ", p, os.path.getsize(p), "bytes")
     raise SystemExit("Attach the dataset via 'Add Input' (it must contain the 7 TSVs).")
+print("selected files:")
+for (s, f), p in sorted(found.items()):
+    print(f"  {s}/{f}: {os.path.getsize(p)/1e6:.1f} MB  <- {p}")
 
 os.makedirs(WORK, exist_ok=True)
 os.makedirs(OUT, exist_ok=True)
