@@ -364,4 +364,19 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        import traceback
+        tb = traceback.format_exc()
+        try:
+            _art = os.environ.get("TRICE_ARTIFACTS_DIR",
+                                  os.path.join(ROOT, "artifacts"))
+            os.makedirs(_art, exist_ok=True)
+            with open(os.path.join(_art, "last_error.txt"), "w",
+                      encoding="utf-8") as _fh:
+                _fh.write(tb)
+        except Exception:
+            pass
+        print(tb, flush=True)
+        raise

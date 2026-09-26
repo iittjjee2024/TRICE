@@ -141,6 +141,10 @@ def run(args, title):
     print(f"\n[{title}] exit={p.returncode}  {time.time() - t0:.0f}s", flush=True)
     if p.returncode != 0:
         print("\n----- last lines of failing stage -----\n" + "".join(tail))
+        err = os.path.join(ART, "last_error.txt")
+        if os.path.isfile(err):
+            print("\n----- full traceback (artifacts/last_error.txt) -----")
+            print(open(err, encoding="utf-8").read())
         raise RuntimeError(f"{title} failed (exit {p.returncode})")
 
 

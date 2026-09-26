@@ -559,4 +559,20 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        # Persist the full traceback so it can be inspected even if the notebook truncated
+        # the streamed output (`cat artifacts/last_error.txt`).
+        import traceback
+        tb = traceback.format_exc()
+        try:
+            os.makedirs(ART_FALLBACK := os.environ.get(
+                "TRICE_ARTIFACTS_DIR", os.path.join(ROOT, "artifacts")), exist_ok=True)
+            with open(os.path.join(ART_FALLBACK, "last_error.txt"), "w",
+                      encoding="utf-8") as _fh:
+                _fh.write(tb)
+        except Exception:
+            pass
+        print(tb, flush=True)
+        raise
