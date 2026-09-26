@@ -41,6 +41,7 @@ import numpy as np
 import pandas as pd
 
 from .normalize import normalize_address, normalize_name
+from .paths import open_text
 
 SOURCE_FILES = {
     ("train", 1): "train_source1.tsv",
@@ -124,7 +125,7 @@ def _norm_block(args: Tuple[List[str], int, Dict[str, str], Dict[str, str]]) -> 
 
 def iter_blocks(path: str, block_lines: int = 50_000) -> Iterator[List[str]]:
     """Yield blocks of raw data lines (header skipped)."""
-    with open(path, encoding="utf-8", newline="") as fh:
+    with open_text(path, newline="") as fh:
         fh.readline()
         block: List[str] = []
         for line in fh:

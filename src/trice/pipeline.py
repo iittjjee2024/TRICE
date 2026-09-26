@@ -34,6 +34,7 @@ from .features import FEATURE_NAMES, FeatureBuilder, prepare_side
 from .graph import (GRAPH_FEATURE_NAMES, GraphConfig, build_graph_features,
                     repair_disjointness)
 from .model import GBDT, GroupCalibrator, ModelConfig
+from .paths import open_text
 
 STORE_COLUMNS = ["num", "src", "country", "name_core", "name_skel", "name_nospace",
                  "legal", "addr_alpha", "addr_digits", "postal", "house"]
@@ -135,7 +136,7 @@ def split_countries(store_dir: str, split: str) -> List[str]:
 def load_ground_truth_subset(path: str, wanted: set[str]) -> Dict[str, List[str]]:
     """Read only the ground-truth rows we need, streaming (the file is 121 MB)."""
     out: Dict[str, List[str]] = {}
-    with open(path, encoding="utf-8") as fh:
+    with open_text(path) as fh:
         next(fh)
         for line in fh:
             s1, _, rest = line.partition("\t")

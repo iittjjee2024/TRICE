@@ -50,7 +50,8 @@ def main() -> None:
     log(f"sampling {args.sample:,} ground-truth groups")
     groups: list[tuple[str, list[str]]] = []
     n_seen = 0
-    with open(os.path.join(DATA, "train_ground_truth.tsv"), encoding="utf-8") as fh:
+    with open(os.path.join(DATA, "train_ground_truth.tsv"),
+              encoding="utf-8", errors="replace") as fh:
         next(fh)
         for line in fh:
             s1, _, rest = line.partition("\t")
@@ -78,7 +79,7 @@ def main() -> None:
     def scan(fname: str, wanted: set[str]) -> None:
         t0 = time.time()
         kept = 0
-        with open(os.path.join(DATA, fname), encoding="utf-8") as fh:
+        with open(os.path.join(DATA, fname), encoding="utf-8", errors="replace") as fh:
             next(fh)
             for line in fh:
                 eid, tab, rest = line.partition("\t")

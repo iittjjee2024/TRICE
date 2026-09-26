@@ -89,7 +89,7 @@ def _read_id_list_file(path: str, expected_header: List[str]
     name = os.path.basename(path)
     if not os.path.isfile(path):
         return mapping, [f"{name}: file not found"]
-    with open(path, encoding="utf-8") as fh:
+    with open(path, encoding="utf-8", errors="replace") as fh:
         header = fh.readline()
         cols = [c.strip().lower() for c in header.rstrip("\n").split("\t")]
         if cols != expected_header:
@@ -220,7 +220,7 @@ def validate_submission(matching_path: str, candidate_path: str | None,
 def read_entity_ids(tsv_path: str) -> List[str]:
     """First-column ids of a source TSV, in file order."""
     out: List[str] = []
-    with open(tsv_path, encoding="utf-8") as fh:
+    with open(tsv_path, encoding="utf-8", errors="replace") as fh:
         next(fh)
         for line in fh:
             if line.strip():

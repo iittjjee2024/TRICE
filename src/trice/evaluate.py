@@ -198,8 +198,9 @@ def blocking_recall(labels: np.ndarray, group_starts: np.ndarray,
 
 def parse_ground_truth(path: str) -> Dict[str, List[str]]:
     """Read ``*_ground_truth.tsv`` into ``{s1_id: [matched ids]}``."""
+    from .paths import open_text
     out: Dict[str, List[str]] = {}
-    with open(path, encoding="utf-8") as fh:
+    with open_text(path) as fh:
         next(fh)
         for line in fh:
             s1, _, rest = line.partition("\t")

@@ -44,7 +44,7 @@ def log(m: str) -> None:
 
 def load_truth_for(s1_ids: set[str]) -> dict[str, list[str]]:
     out: dict[str, list[str]] = {}
-    with open(GT, encoding="utf-8") as fh:
+    with open(GT, encoding="utf-8", errors="replace") as fh:
         next(fh)
         for line in fh:
             s1, _, rest = line.partition("\t")

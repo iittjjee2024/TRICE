@@ -23,7 +23,28 @@ The Kaggle notebook sets these once; local runs need none of them.
 
 from __future__ import annotations
 
+import io
 import os
+from typing import IO
+
+
+def open_text(path: str, mode: str = "r", **kwargs) -> IO:
+    """Open a data file tolerantly.
+
+    The provided TSVs are not guaranteed to be valid UTF-8 -- some rows contain stray
+    bytes (e.g. a lone ``0xCC`` inside a transliterated address), which makes a strict
+    ``open(..., encoding='utf-8')`` raise ``UnicodeDecodeError`` on the first bad byte and
+    abort the whole run. Business names and addresses are noisy by nature, so on read we
+    decode as UTF-8 and **replace** undecodable bytes rather than fail; a handful of
+    replacement characters in a field that the normaliser is going to fold anyway is
+    harmless. Writes stay strict, because everything we emit is valid UTF-8.
+    """
+    if "b" in mode:
+        return open(path, mode, **kwargs)
+    kwargs.setdefault("encoding", "utf-8")
+    if "r" in mode:
+        kwargs.setdefault("errors", "replace")
+    return open(path, mode, **kwargs)
 
 
 def dataset_dir(root: str) -> str:
@@ -53,4 +74,4 @@ def output_dir(root: str) -> str:
     return path
 
 
-__all__ = ["dataset_dir", "artifacts_dir", "output_dir"]
+__all__ = ["open_text", "dataset_dir", "artifacts_dir", "output_dir"]
