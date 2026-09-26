@@ -118,7 +118,7 @@ import collections
 TRAIN_ENTITIES = 70000 if SUBSET is None else SUBSET
 STAGES = [
     (["scripts/02_mine_variants.py", "--sample", "250000"], "mine variants"),
-    (["scripts/03_prepare.py", "--workers", "3"], "prepare record store"),
+    (["scripts/03_prepare.py", "--workers", "3", "--force"], "prepare record store"),
     (["scripts/05_train.py", "--entities", str(TRAIN_ENTITIES), "--run-id", "kaggle"],
      "train + validate"),
     (["scripts/07_tune_decision.py", "--run-id", "kaggle"], "tune decision"),

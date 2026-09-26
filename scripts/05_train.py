@@ -91,6 +91,11 @@ def main() -> None:
 
     countries = split_countries(STORE, "train")
     log(f"run {run_id}; train countries = {countries}")
+    if not countries:
+        raise SystemExit(
+            f"no country partitions found in the record store at {STORE}.\n"
+            f"  The store is empty or missing - re-run scripts/03_prepare.py --force "
+            f"(a previous broken run may have left empty Parquet files).")
 
     # ==================================================================== phase A ====
     parts = []

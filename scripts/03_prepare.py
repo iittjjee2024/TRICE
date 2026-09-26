@@ -56,14 +56,39 @@ def main() -> None:
     splits = ["train", "test"] if args.split == "both" else [args.split]
     log(f"using {args.workers} worker processes")
 
+    import pyarrow.parquet as pq
+
+    def existing_rows(path: str) -> int:
+        """Row count of an existing store file, or -1 if absent/unreadable."""
+        if not os.path.isfile(path):
+            return -1
+        try:
+            return pq.ParquetFile(path).metadata.num_rows
+        except Exception:
+            return -1
+
     with mp.Pool(args.workers) as pool:
         for split in splits:
             for src in (1, 2, 3):
                 out = store_path(STORE, split, src)
-                if os.path.isfile(out) and not args.force:
-                    log(f"skip {split}/source{src} (exists)")
-                    continue
                 raw = os.path.join(DATA, split, f"{split}_source{src}.tsv")
+
+                if not os.path.isfile(raw):
+                    raise SystemExit(
+                        f"source file not found: {raw}\n"
+                        f"  DATA (TRICE_DATA_DIR) resolves to: {DATA}\n"
+                        f"  expected the dataset under {DATA}/{split}/.")
+
+                # Regenerate unless a NON-EMPTY store already exists. A previous broken run
+                # (e.g. reading a 254-byte macOS sidecar) could have written an empty
+                # Parquet; skipping it silently is what caused 'train countries = []'.
+                have = existing_rows(out)
+                if have > 0 and not args.force:
+                    log(f"skip {split}/source{src} (exists, {have:,} rows)")
+                    continue
+                if have == 0:
+                    log(f"  {split}/source{src}: existing store is EMPTY - regenerating")
+
                 t0 = time.time()
                 last = [0.0]
 
@@ -80,6 +105,11 @@ def main() -> None:
                 size = os.path.getsize(out) / 1e6
                 log(f"  {split}/source{src}: {n:,} rows -> {out} "
                     f"({size:,.0f} MB) in {time.time() - t0:.0f}s")
+                if n == 0:
+                    raise SystemExit(
+                        f"{split}/source{src} produced 0 rows from {raw} "
+                        f"({os.path.getsize(raw):,} bytes). The source file is not the "
+                        f"real dataset (likely a macOS '._' sidecar or an empty upload).")
 
     log("done")
 
