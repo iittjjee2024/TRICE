@@ -208,33 +208,46 @@ def main() -> None:
         del q_side_full, idf, idx_all, fb, counts_per_pair
 
         # ------------------------------------------------------------- graph ----
+        # Graph features are spilled to disk too. On the largest partition (~58 M pairs x
+        # 24 float32) they are ~5.6 GB; holding that in RAM alongside p1, the candidate
+        # arrays and the ensemble's prediction temporaries is what triggered the Kaggle
+        # OOM (exit -9). A memmap keeps peak RAM flat regardless of partition size.
         log("  graph features (global competition within partition)")
         t0 = time.time()
-        G = build_graph_features(
+        from trice.graph import N_GRAPH_FEATURES
+        g_path = os.path.join(scratch, f"G_{country}.f32")
+        G_mm = np.memmap(g_path, dtype=np.float32, mode="w+",
+                         shape=(n_pairs, N_GRAPH_FEATURES))
+        G_mm[:] = build_graph_features(
             cand.q_row.astype(np.int64), cand.c_row.astype(np.int64), p1,
             idx_src[cand.c_row], postal_code[cand.c_row], digit_code[cand.c_row],
             skel_code[cand.c_row], graph_cfg)
-        log(f"    {G.shape} in {time.time() - t0:.0f}s ({G.nbytes / 1e9:.2f} GB)")
+        G_mm.flush()
+        log(f"    ({n_pairs}, {N_GRAPH_FEATURES}) in {time.time() - t0:.0f}s "
+            f"(spilled {n_pairs * N_GRAPH_FEATURES * 4 / 1e9:.1f} GB to {g_path})")
         del postal_code, digit_code, skel_code
 
         # ------------------------------------------------------------- pass 2 ----
         if use_stage2:
             log("  pass 2: stage 2 (full features + graph) + calibration")
             p2 = np.zeros(n_pairs, dtype=np.float32)
-            step = 1_000_000
+            step = 500_000
             for s in range(0, n_pairs, step):
                 e = min(s + step, n_pairs)
-                p2[s:e] = m2.predict(
-                    np.concatenate([np.asarray(X_mm[s:e]), G[s:e]], axis=1))
+                Xchunk = np.concatenate([np.asarray(X_mm[s:e]),
+                                         np.asarray(G_mm[s:e])], axis=1)
+                p2[s:e] = m2.predict(Xchunk)
+                del Xchunk
         else:
             log("  pass 2: stage 2 disabled by training-time validation; using stage 1")
             p2 = p1
-        del G
+        del G_mm
         del X_mm
-        try:
-            os.remove(mm_path)
-        except OSError:
-            pass
+        for _p in (mm_path, g_path):
+            try:
+                os.remove(_p)
+            except OSError:
+                pass
         groups = np.full(n_pairs, country, dtype=object)
         p_cal = cal.transform(p2, groups)
         del p2, groups
@@ -273,11 +286,12 @@ def main() -> None:
 
         # ------------------------------------------------- write partition shard ----
         # One TSV shard per partition: "S1-<num> \t match_ids \t candidate_ids". Assembled
-        # into the final, ordered output files after every partition is done.
+        # into the final, ordered output files after every partition is done. Candidate id
+        # strings are built PER ENTITY inside the loop, not as one 58 M-element array up
+        # front -- materialising that whole string array was another multi-GB RAM spike.
         ent_num = s1["num"].to_numpy()
-        cand_id_str = np.char.add(
-            np.char.add("S", idx_src[cand.c_row].astype(str)),
-            np.char.add("-", idx_num[cand.c_row].astype(str)))
+        cand_src_arr = idx_src[cand.c_row]      # int8, cheap
+        cand_num_arr = idx_num[cand.c_row]      # int32, cheap
         shard_path = os.path.join(shard_dir, f"{country}.tsv")
         with open(shard_path, "w", encoding="utf-8", newline="") as sh:
             for g in range(n_ent):
@@ -286,13 +300,16 @@ def main() -> None:
                 if en <= st:
                     sh.write(f"{eid}\t\t\n")
                     continue
-                block_ids = cand_id_str[st:en]
-                cand_join = ",".join(block_ids.tolist())
+                srcs = cand_src_arr[st:en]
+                nums = cand_num_arr[st:en]
+                block_ids = [f"S{int(s)}-{int(n)}" for s, n in zip(srcs, nums)]
+                cand_join = ",".join(block_ids)
                 sel = mask[st:en]
-                match_join = ",".join(block_ids[sel].tolist()) if sel.any() else ""
+                match_join = (",".join(bid for bid, k in zip(block_ids, sel) if k)
+                              if sel.any() else "")
                 sh.write(f"{eid}\t{match_join}\t{cand_join}\n")
         log(f"  wrote shard {shard_path}")
-        del cand_id_str, ent_num
+        del ent_num, cand_src_arr, cand_num_arr
 
         per_country_stats[country] = {
             "n_entities": n_ent, "n_index": n_index, "n_pairs": int(n_pairs),

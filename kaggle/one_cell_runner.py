@@ -124,7 +124,7 @@ STAGES = [
     (["scripts/05_train.py", "--entities", str(TRAIN_ENTITIES), "--run-id", "kaggle"],
      "train + validate"),
     (["scripts/07_tune_decision.py", "--run-id", "kaggle"], "tune decision"),
-    (["scripts/06_infer.py", "--run-id", "kaggle", "--query-batch", "120000"],
+    (["scripts/06_infer.py", "--run-id", "kaggle", "--query-batch", "60000"],
      "full test inference"),
 ]
 
