@@ -372,3 +372,54 @@ worse model.
 0.8413 vs 0.8792, and India is 47 % of the test set. Devanagari names and landmark-based
 addresses are the likely cause. The address channel already carries these cases; the higher
 `top_k` should help most here.
+
+---
+
+## 9. Post-0.892 improvements (session 2)
+
+The 0.892 full-data leaderboard submission was bounded by **blocking recall (~0.879)**, not
+the matcher (stage-2 AUC 0.9998). Two changes target the binding constraint and add model
+diversity, both within the ≤ 8 B / MIT-Apache rules.
+
+### 9.1 Wider blocking (the main lever)
+
+Measured on India (5,000 sampled entities, full 4.1 M index):
+
+| config | macro recall | zero-recall entities | full-recall | cand/entity | full-test time |
+|---|---|---|---|---|---|
+| previous (0.892 run) | 0.8633 | 3.06 % | 69.5 % | 47 | 17 min |
+| **wider (adopted)** | **0.8861** | **2.10 %** | **73.4 %** | 71 | 44 min |
+| wider + char-n-gram | 0.8872 | 2.10 % | 74.0 % | 72 | 57 min |
+
+Production change: name channel `df_cap 4k→8k`, `k`-cap `1.2k→2.5k`, `w`/`S` `200→400`,
+`top_k 30→45`, `min_score 0.045→0.030`; address channel `df_cap 6k→12k`, `H`/`D` `200→400`,
+`top_k 26→40`, `min_score 0.08→0.055`; `max_candidates 48→72`; `max_shingles 10→16`.
+
+**+2.3 points of macro recall** (0.863 → 0.886) and zero-recall entities cut from 3.06 % to
+2.10 %. At P ≈ 0.955 that lifts the F<sub>0.5</sub> ceiling by roughly 0.01–0.015.
+
+**Char-n-gram channel rejected.** Adding name-core character 4-grams gained only +0.001
+recall while nearly doubling the name-index memory (0.25 → 0.42 GB nnz) and adding ~30 %
+query time (44 → 57 min/partition). A poor trade on Kaggle's 16 GB / 12 h limits, so it is
+left out of the production config (the token generator still supports the `c` namespace for
+experimentation).
+
+### 9.2 Ensemble matcher
+
+The single LightGBM matcher is replaced by an **ensemble that rank-averages every installed
+boosting backend** (LightGBM + XGBoost + CatBoost, all MIT/Apache). Rank-averaging is used
+rather than probability-averaging because the backends calibrate differently; the downstream
+per-country isotonic calibration then re-honests the blended score. Missing libraries are
+skipped, and with none installed it degrades to a single HistGradientBoosting model, so it is
+safe on any environment. Combined parameter count stays ~10<sup>5</sup>, far inside the 8 B
+cap. On near-separable synthetic data the ensemble ties the best single backend; on the real
+noisy pairs the diversity gives a small, reliable variance reduction. Selected with
+`05_train.py --matcher ensemble` (now the default).
+
+### 9.3 Realistic ceiling
+
+With recall ~0.886 and precision ~0.955, the achievable macro F<sub>0.5</sub> ceiling is
+about `1.25·0.886/(0.25+0.886) ≈ 0.975` for a flawless matcher; the realized value will sit
+a little below. **0.999 is not reachable** on this noisy, zero-shot-country, one-to-many task
+— strong-submission territory is ~0.95–0.975, and these two changes are expected to move the
+0.892 result up by a few points, not to a perfect score.

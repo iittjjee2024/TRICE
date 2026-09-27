@@ -37,6 +37,18 @@ try:
 except Exception:                                            # pragma: no cover
     _HAVE_LGB = False
 
+try:
+    import xgboost as xgb
+    _HAVE_XGB = True
+except Exception:                                            # pragma: no cover
+    _HAVE_XGB = False
+
+try:
+    from catboost import CatBoostClassifier
+    _HAVE_CAT = True
+except Exception:                                            # pragma: no cover
+    _HAVE_CAT = False
+
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.isotonic import IsotonicRegression
 from sklearn.metrics import average_precision_score, roc_auc_score
@@ -44,7 +56,7 @@ from sklearn.metrics import average_precision_score, roc_auc_score
 
 @dataclass
 class ModelConfig:
-    kind: str = "auto"              # auto | lightgbm | hgb
+    kind: str = "auto"              # auto | lightgbm | hgb | xgboost | catboost | ensemble
     max_iter: int = 400
     learning_rate: float = 0.06
     max_leaf_nodes: int = 63
@@ -54,6 +66,10 @@ class ModelConfig:
     early_stopping_rounds: int = 30
     random_state: int = 20260925
     n_jobs: int = -1
+    # 'ensemble' averages the rank-normalised probabilities of every available boosting
+    # backend below; missing libraries are skipped, so it degrades gracefully to whatever
+    # is installed. Averaging diverse GBDTs is a small, reliable variance reduction.
+    ensemble_backends: Tuple[str, ...] = ("lightgbm", "xgboost", "catboost")
 
     def resolve(self) -> str:
         if self.kind != "auto":
@@ -74,16 +90,18 @@ class GBDT:
             X_val: np.ndarray | None = None, y_val: np.ndarray | None = None,
             feature_names: Sequence[str] | None = None) -> "GBDT":
         self.feature_names = list(feature_names or [])
-        if self.kind == "lightgbm":
+        backend = {"lightgbm": self._fit_lightgbm, "xgboost": self._fit_xgboost,
+                   "catboost": self._fit_catboost}.get(self.kind)
+        if backend is not None:
             try:
-                self._fit_lightgbm(X, y, X_val, y_val)
+                backend(X, y, X_val, y_val)
                 return self
             except Exception as exc:                       # pragma: no cover
-                # LightGBM APIs and recognised metric names drift between versions, and the
-                # exact build on a hosted environment (Kaggle) may differ from the pinned
-                # one. Rather than fail the whole run, fall back to scikit-learn's
-                # HistGradientBoosting, which ships everywhere and needs no callbacks.
-                print(f"[GBDT] LightGBM fit failed ({type(exc).__name__}: {exc}); "
+                # Boosting library APIs drift between versions and the exact build on a
+                # hosted environment (Kaggle) may differ from the pinned one. Rather than
+                # fail the whole run, fall back to scikit-learn's HistGradientBoosting,
+                # which ships everywhere and needs no callbacks.
+                print(f"[GBDT] {self.kind} fit failed ({type(exc).__name__}: {exc}); "
                       f"falling back to HistGradientBoosting", flush=True)
                 self.kind = "hgb"
         self._fit_hgb(X, y, X_val, y_val)
@@ -116,6 +134,40 @@ class GBDT:
         self.model = lgb.train(params, dtrain, num_boost_round=self.cfg.max_iter,
                                valid_sets=valid, callbacks=callbacks)
 
+    def _fit_xgboost(self, X, y, X_val, y_val) -> None:
+        # sklearn API keeps this version-stable; early stopping via callbacks/param.
+        kwargs = dict(
+            n_estimators=self.cfg.max_iter, learning_rate=self.cfg.learning_rate,
+            max_leaves=self.cfg.max_leaf_nodes, min_child_weight=self.cfg.min_samples_leaf,
+            reg_lambda=self.cfg.l2_regularization, max_bin=self.cfg.max_bins,
+            subsample=0.9, colsample_bytree=0.9, tree_method="hist",
+            objective="binary:logistic", eval_metric="auc",
+            n_jobs=self.cfg.n_jobs, random_state=self.cfg.random_state,
+        )
+        if X_val is not None and y_val is not None:
+            try:
+                kwargs["early_stopping_rounds"] = self.cfg.early_stopping_rounds
+                self.model = xgb.XGBClassifier(**kwargs)
+                self.model.fit(X, y, eval_set=[(X_val, y_val)], verbose=False)
+                return
+            except TypeError:
+                kwargs.pop("early_stopping_rounds", None)
+        self.model = xgb.XGBClassifier(**kwargs)
+        self.model.fit(X, y)
+
+    def _fit_catboost(self, X, y, X_val, y_val) -> None:
+        self.model = CatBoostClassifier(
+            iterations=self.cfg.max_iter, learning_rate=self.cfg.learning_rate,
+            depth=8, l2_leaf_reg=self.cfg.l2_regularization,
+            loss_function="Logloss", eval_metric="AUC",
+            random_seed=self.cfg.random_state, thread_count=self.cfg.n_jobs,
+            verbose=False, allow_writing_files=False,
+        )
+        eval_set = (X_val, y_val) if X_val is not None and y_val is not None else None
+        self.model.fit(X, y, eval_set=eval_set,
+                       early_stopping_rounds=self.cfg.early_stopping_rounds
+                       if eval_set is not None else None, verbose=False)
+
     def _fit_hgb(self, X, y, X_val, y_val) -> None:
         self.model = HistGradientBoostingClassifier(
             max_iter=self.cfg.max_iter, learning_rate=self.cfg.learning_rate,
@@ -134,6 +186,8 @@ class GBDT:
         if self.kind == "lightgbm":
             return self.model.predict(X, num_iteration=getattr(
                 self.model, "best_iteration", None)).astype(np.float32)
+        if self.kind == "catboost":
+            return self.model.predict_proba(X)[:, 1].astype(np.float32)
         return self.model.predict_proba(X)[:, 1].astype(np.float32)
 
     # -------------------------------------------------------------- introspection ----
@@ -175,6 +229,88 @@ class GBDT:
             return int(total)
         except Exception:                                  # pragma: no cover
             return 0
+
+
+def _available_backends(requested: Sequence[str]) -> List[str]:
+    have = {"lightgbm": _HAVE_LGB, "xgboost": _HAVE_XGB, "catboost": _HAVE_CAT}
+    out = [b for b in requested if have.get(b, False)]
+    return out
+
+
+class EnsembleMatcher:
+    """Averages the rank-normalised predictions of several boosting backends.
+
+    Exposes the same ``fit`` / ``predict`` / ``importances`` / ``n_parameters`` interface as
+    :class:`GBDT`, so it is a drop-in matcher. Rank averaging (rather than raw-probability
+    averaging) is used because the backends calibrate differently -- ranks make the blend
+    invariant to each model's probability scale, and the downstream isotonic calibration
+    then makes the blended score honest again.
+
+    Degrades gracefully: any backend whose library is not installed is skipped; if only one
+    (or none) is available it behaves like a single :class:`GBDT`.
+    """
+
+    def __init__(self, cfg: ModelConfig) -> None:
+        self.cfg = cfg
+        self.members: List[GBDT] = []
+        self.backends: List[str] = []
+        self.feature_names: List[str] = []
+        self.kind = "ensemble"
+
+    def fit(self, X, y, X_val=None, y_val=None, feature_names=None) -> "EnsembleMatcher":
+        self.feature_names = list(feature_names or [])
+        backends = _available_backends(self.cfg.ensemble_backends)
+        if not backends:                       # nothing installed -> single hgb model
+            backends = ["hgb"]
+        print(f"[Ensemble] backends: {backends}", flush=True)
+        for b in backends:
+            member_cfg = ModelConfig(**{**self.cfg.__dict__, "kind": b})
+            m = GBDT(member_cfg).fit(X, y, X_val, y_val, feature_names)
+            self.members.append(m)
+            self.backends.append(m.kind)       # record the resolved kind (post-fallback)
+        return self
+
+    @staticmethod
+    def _rank_norm(p: np.ndarray) -> np.ndarray:
+        # average-rank in [0,1]; ties share their mean rank
+        order = np.argsort(p, kind="stable")
+        ranks = np.empty(len(p), dtype=np.float64)
+        ranks[order] = np.arange(len(p), dtype=np.float64)
+        return (ranks / max(len(p) - 1, 1)).astype(np.float32)
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        if not self.members:
+            raise RuntimeError("EnsembleMatcher.predict called before fit")
+        if len(self.members) == 1:
+            return self.members[0].predict(X)
+        acc = np.zeros(X.shape[0], dtype=np.float64)
+        for m in self.members:
+            acc += self._rank_norm(m.predict(X))
+        return (acc / len(self.members)).astype(np.float32)
+
+    def importances(self) -> List[Tuple[str, float]]:
+        """Mean normalised importance across members (best-effort)."""
+        agg: Dict[str, float] = {}
+        for m in self.members:
+            for name, val in m.importances():
+                agg[name] = agg.get(name, 0.0) + val
+        n = max(len(self.members), 1)
+        out = [(k, v / n) for k, v in agg.items()]
+        out.sort(key=lambda t: -t[1])
+        return out
+
+    def n_parameters(self) -> int:
+        return int(sum(m.n_parameters() for m in self.members))
+
+
+def make_matcher(cfg: ModelConfig):
+    """Factory: an :class:`EnsembleMatcher` when ``kind == 'ensemble'``, else a :class:`GBDT`.
+
+    Both share the same interface, so callers (05_train / 06_infer) are agnostic.
+    """
+    if cfg.kind == "ensemble":
+        return EnsembleMatcher(cfg)
+    return GBDT(cfg)
 
 
 # --------------------------------------------------------------------------------------
@@ -300,5 +436,6 @@ def load_bundle(path: str) -> dict:
         return pickle.load(fh)
 
 
-__all__ = ["ModelConfig", "GBDT", "GroupCalibrator", "rank_metrics",
-           "feature_separation", "save_bundle", "load_bundle", "_HAVE_LGB"]
+__all__ = ["ModelConfig", "GBDT", "EnsembleMatcher", "make_matcher", "GroupCalibrator",
+           "rank_metrics", "feature_separation", "save_bundle", "load_bundle",
+           "_HAVE_LGB", "_HAVE_XGB", "_HAVE_CAT"]

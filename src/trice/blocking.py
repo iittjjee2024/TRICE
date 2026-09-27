@@ -85,7 +85,7 @@ class BlockingConfig:
     # ---- token generation -------------------------------------------------------
     use_skeleton_shingles: bool = True
     shingle_size: int = 6
-    max_shingles: int = 10
+    max_shingles: int = 16
 
     w_name: float = 1.0
     w_shingle: float = 0.45
@@ -96,23 +96,36 @@ class BlockingConfig:
     w_house_anchor: float = 1.3
     w_digit_sig: float = 1.5
 
+    # name-core character n-grams (namespace 'c'): recall booster for typos/truncations
+    char_ngram: int = 4
+    max_char_ngrams: int = 16
+    w_char_ngram: float = 0.35
+
     min_df: int = 1
 
     # ---- channels ---------------------------------------------------------------
-    # top_k / max_candidates are set for recall rather than compute: with the matcher at
-    # AUC ~0.999 an extra candidate is very unlikely to be mistaken for a match, so the
-    # cost of a wider candidate set is CPU, not precision. See docs/05_EDA_FINDINGS.md §8.2.
+    # Recall is the binding constraint (blocking ceiling ~0.88 caps the score, not the
+    # matcher which sits at AUC ~0.999). An extra candidate is very unlikely to be mistaken
+    # for a match, so widening the candidate set costs CPU, not precision. We therefore
+    # push top_k / max_candidates up and the df caps / min_score thresholds looser so more
+    # true matches survive to the matcher. See docs/05_EDA_FINDINGS.md §8.2.
+    # The 'c' (char-n-gram) namespace was measured to add only ~+0.001 recall while nearly
+    # doubling the name index memory and ~30% more query time -- a poor trade on Kaggle's
+    # 16 GB / 12 h limits, so it is left out of the production channel. The token generator
+    # still supports it (record_tokens) for experimentation via the config below.
     channels: List[ChannelConfig] = field(default_factory=lambda: [
-        ChannelConfig("name", ("n", "k", "w", "S"), df_cap=4_000,
-                      ns_caps={"k": 1_200, "w": 200, "S": 200},
-                      top_k=30, min_score=0.045),
-        ChannelConfig("addr", ("a", "d", "H", "D"), df_cap=6_000,
-                      ns_caps={"H": 200, "D": 200},
-                      top_k=26, min_score=0.08),
+        ChannelConfig("name", ("n", "k", "w", "S"), df_cap=8_000,
+                      ns_caps={"k": 2_500, "w": 400, "S": 400},
+                      top_k=45, min_score=0.030),
+        ChannelConfig("addr", ("a", "d", "H", "D"), df_cap=12_000,
+                      ns_caps={"H": 400, "D": 400},
+                      top_k=40, min_score=0.055),
     ])
+    # more skeleton shingles -> more cross-script / typo recall on the name channel
+    # (overridden here because the default 10 leaves long names under-covered)
 
     # ---- union ------------------------------------------------------------------
-    max_candidates: int = 48
+    max_candidates: int = 72
 
     def channel(self, name: str) -> ChannelConfig:
         for c in self.channels:
@@ -165,6 +178,14 @@ def record_tokens(name_core: str, name_skel: str, name_nospace: str,
         out.append(("w" + name_nospace, cfg.w_nospace))
     if want("S") and len(name_skel) >= 6:
         out.append(("S" + name_skel, cfg.w_skel))
+
+    # Character n-grams over the space-free core name. Catches the recall gap that exact
+    # tokens and skeleton shingles both miss: heavy typos, truncations ('Ace Foods' ->
+    # 'Ace'), transliteration drift, and domainified names, without needing the whole
+    # string to match. Targets the ~2% zero-recall entities (India Devanagari especially).
+    if want("c") and len(name_nospace) >= cfg.char_ngram + 1:
+        for g in _shingles(name_nospace, cfg.char_ngram, cfg.max_char_ngrams):
+            out.append(("c" + g, cfg.w_char_ngram))
 
     a_toks = addr_alpha.split() if (want("a") or want("H")) else []
     if want("a"):

@@ -40,7 +40,7 @@ from trice.features import (FEATURE_NAMES, STAGE2_RAW_FEATURES,              # n
                             STAGE2_RAW_INDEX, prepare_side)
 from trice.graph import (GRAPH_FEATURE_NAMES, GraphConfig,                   # noqa: E402
                          build_graph_features, repair_disjointness)
-from trice.model import (GBDT, GroupCalibrator, ModelConfig,                 # noqa: E402
+from trice.model import (GBDT, GroupCalibrator, ModelConfig, make_matcher,   # noqa: E402
                          feature_separation, rank_metrics, save_bundle)
 from trice.pipeline import (Candidates, MissingMassEstimator, attach_labels,  # noqa: E402
                            build_feature_matrix, compact_candidates, compute_idf,
@@ -78,6 +78,10 @@ def main() -> None:
                          "the full set, so the base rate the calibrator sees is correct.")
     ap.add_argument("--val-rows", type=int, default=600_000,
                     help="cap on pairs used for early stopping")
+    ap.add_argument("--matcher", default="ensemble",
+                    choices=["ensemble", "lightgbm", "xgboost", "catboost", "hgb", "auto"],
+                    help="matcher backend; 'ensemble' rank-averages every installed "
+                         "boosting library (lightgbm+xgboost+catboost)")
     args = ap.parse_args()
 
     run_id = args.run_id or time.strftime("r-%Y%m%d-%H%M%S")
@@ -85,7 +89,7 @@ def main() -> None:
     os.makedirs(outdir, exist_ok=True)
 
     block_cfg = BlockingConfig()
-    model_cfg = ModelConfig()
+    model_cfg = ModelConfig(kind=args.matcher)
     graph_cfg = GraphConfig()
     rng = np.random.default_rng(args.seed)
 
@@ -264,8 +268,8 @@ def main() -> None:
         f"{int(y[fit_idx].sum()):,} = {y[fit_idx].mean():.2%}); "
         f"early-stopping rows: {len(es_idx):,}")
 
-    log("--- stage 1: pairwise GBDT")
-    m1 = GBDT(model_cfg)
+    log(f"--- stage 1: pairwise matcher ({model_cfg.kind})")
+    m1 = make_matcher(model_cfg)
     t0 = time.time()
     m1.fit(X[fit_idx], y[fit_idx], X[es_idx], y[es_idx],
            feature_names=list(FEATURE_NAMES))
@@ -292,8 +296,8 @@ def main() -> None:
     # earlier version fed stage 2 only a 12-column slice and the truncation cost more than
     # the graph features added.
     all_names = list(FEATURE_NAMES) + list(GRAPH_FEATURE_NAMES)
-    log(f"--- stage 2: stacked GBDT on {len(all_names)} features")
-    m2 = GBDT(model_cfg)
+    log(f"--- stage 2: stacked matcher ({model_cfg.kind}) on {len(all_names)} features")
+    m2 = make_matcher(model_cfg)
     t0 = time.time()
     # Only the fitting slices are materialised as a combined matrix, never all 6.6 M rows.
     m2.fit(np.concatenate([X[fit_idx], G[fit_idx]], axis=1), y[fit_idx],

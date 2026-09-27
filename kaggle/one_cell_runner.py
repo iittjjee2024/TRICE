@@ -32,8 +32,10 @@ head = subprocess.run(["git", "-C", CODE, "rev-parse", "--short", "HEAD"],
 print("repo at commit", head)
 
 # ---- 2. dependencies (rest ship with Kaggle) -----------------------------------------
-subprocess.run([sys.executable, "-m", "pip", "install", "-q", "rapidfuzz", "Unidecode"],
-               check=True)
+# rapidfuzz/Unidecode are always needed. lightgbm/xgboost/catboost usually ship with
+# Kaggle; the ensemble uses whichever are importable and skips the rest.
+subprocess.run([sys.executable, "-m", "pip", "install", "-q",
+                "rapidfuzz", "Unidecode", "xgboost", "catboost"], check=True)
 
 # ---- 3. locate the dataset regardless of how it was uploaded -------------------------
 REQUIRED = [("train", "train_source1.tsv"), ("train", "train_source2.tsv"),

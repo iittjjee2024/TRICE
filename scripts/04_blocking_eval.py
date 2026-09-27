@@ -102,6 +102,25 @@ SWEEPS: dict[str, list[tuple]] = {
          dict(df_cap=6_000, ns_caps={"H": 200, "D": 200}, top_k=18, min_score=0.10),
          32, True),
     ],
+    # compare the previous production width against the new wider one (task #2)
+    "recall": [
+        ("prev-0.892",
+         dict(df_cap=4_000, ns_caps={"k": 1_200, "w": 200, "S": 200}, top_k=30,
+              min_score=0.045),
+         dict(df_cap=6_000, ns_caps={"H": 200, "D": 200}, top_k=26, min_score=0.08),
+         48, True),
+        ("wider",
+         dict(df_cap=8_000, ns_caps={"k": 2_500, "w": 400, "S": 400}, top_k=45,
+              min_score=0.030),
+         dict(df_cap=12_000, ns_caps={"H": 400, "D": 400}, top_k=40, min_score=0.055),
+         72, True),
+        ("wider+charngram",
+         dict(namespaces=("n", "k", "w", "S", "c"), df_cap=8_000,
+              ns_caps={"k": 2_500, "c": 4_000, "w": 400, "S": 400}, top_k=45,
+              min_score=0.030),
+         dict(df_cap=12_000, ns_caps={"H": 400, "D": 400}, top_k=40, min_score=0.055),
+         72, True),
+    ],
 }
 
 
@@ -163,11 +182,13 @@ def main() -> None:
 
     rows = []
     for (label, name_kw, addr_kw, max_cand, shingles) in SWEEPS[args.sweep]:
+        name_kw = dict(name_kw)
+        name_ns = tuple(name_kw.pop("namespaces", ("n", "k", "w", "S")))
         cfg = BlockingConfig(
             use_skeleton_shingles=shingles,
             max_candidates=max_cand,
             channels=[
-                ChannelConfig("name", ("n", "k", "w", "S"), **name_kw),
+                ChannelConfig("name", name_ns, **name_kw),
                 ChannelConfig("addr", ("a", "d", "H", "D"), **addr_kw),
             ])
         tag = (f"{label}: name(cap={name_kw['df_cap']},k={name_kw['top_k']}) "
