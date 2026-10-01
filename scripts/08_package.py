@@ -51,8 +51,14 @@ PIPELINE_SCRIPTS = [
     "05_train.py",
     "06_infer.py",
     "07_tune_decision.py",
+    "08_package.py",
     "test_normalize.py",
     "test_decide.py",
+    "test_union.py",
+    "test_model.py",
+    "test_encoding.py",
+    "test_detect.py",
+    "test_infer_memmap.py",
 ]
 
 CODE_README = """# Business Entity Resolution — team Vortex
@@ -166,9 +172,14 @@ def main() -> None:
 
     zip_path = args.out or os.path.join(ROOT, f"{args.team}_submission.zip")
     if os.path.exists(zip_path):
-        os.remove(zip_path)
+        try:
+            os.remove(zip_path)
+        except OSError:
+            # the old archive is open elsewhere (e.g. a file explorer / previous run on
+            # Windows); write to a temp name and swap it in instead of failing.
+            zip_path = zip_path + ".new"
 
-    base = "code/business_engine" if False else "code/business_entity_resolution"
+    base = "code/business_entity_resolution"
     n = 0
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
         # ---- output ----
