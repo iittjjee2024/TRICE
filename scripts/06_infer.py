@@ -211,17 +211,30 @@ def main() -> None:
         # Graph features are spilled to disk too. On the largest partition (~58 M pairs x
         # 24 float32) they are ~5.6 GB; holding that in RAM alongside p1, the candidate
         # arrays and the ensemble's prediction temporaries is what triggered the Kaggle
-        # OOM (exit -9). A memmap keeps peak RAM flat regardless of partition size.
+        # OOM (exit -9). build_graph_features now writes column-by-column straight into the
+        # memmap via out= (no full return copy) and keeps its internal sort/group buffers
+        # in float32, so peak RAM is just the transient sort temporaries (~0.3 GB per 1 M
+        # pairs) rather than the old full float64 matrix plus a return copy.
         log("  graph features (global competition within partition)")
         t0 = time.time()
         from trice.graph import N_GRAPH_FEATURES
         g_path = os.path.join(scratch, f"G_{country}.f32")
         G_mm = np.memmap(g_path, dtype=np.float32, mode="w+",
                          shape=(n_pairs, N_GRAPH_FEATURES))
-        G_mm[:] = build_graph_features(
-            cand.q_row.astype(np.int64), cand.c_row.astype(np.int64), p1,
-            idx_src[cand.c_row], postal_code[cand.c_row], digit_code[cand.c_row],
-            skel_code[cand.c_row], graph_cfg)
+        # Materialise the per-candidate lookups once (each is a full n_pairs array; doing
+        # them inline inside the call created four simultaneous copies at the RAM peak).
+        # q_row/c_row are promoted to int64 up front for the same reason. Writing straight
+        # into the memmap via out= avoids a full (n_pairs, 24) float32 return copy.
+        cc = cand.c_row
+        g_q = cand.q_row.astype(np.int64)
+        g_c = cc.astype(np.int64)
+        g_src = idx_src[cc]
+        g_postal = postal_code[cc]
+        g_digit = digit_code[cc]
+        g_skel = skel_code[cc]
+        build_graph_features(
+            g_q, g_c, p1, g_src, g_postal, g_digit, g_skel, graph_cfg, out=G_mm)
+        del g_q, g_c, g_src, g_postal, g_digit, g_skel
         G_mm.flush()
         log(f"    ({n_pairs}, {N_GRAPH_FEATURES}) in {time.time() - t0:.0f}s "
             f"(spilled {n_pairs * N_GRAPH_FEATURES * 4 / 1e9:.1f} GB to {g_path})")

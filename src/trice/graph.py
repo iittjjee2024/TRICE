@@ -97,22 +97,29 @@ def _group_stats(group_key: np.ndarray, value: np.ndarray
     if n == 0:
         z = np.zeros(0, dtype=np.float32)
         return z, z, z, z
-    order = np.lexsort((-value, group_key))
+    # Values are kept float32 (stage-1 probabilities / logits need no more precision) and
+    # the negated sort key is built into a throwaway buffer that is freed before the heavy
+    # reorder copies, keeping the transient footprint of this O(n log n) step low -- it is
+    # called three times on the ~58 M-pair India partition.
+    value = np.asarray(value, dtype=np.float32)
+    neg = np.negative(value)
+    order = np.lexsort((neg, group_key))
+    del neg
     gk = group_key[order]
     vv = value[order]
 
     first = np.empty(n, dtype=bool)
     first[0] = True
     np.not_equal(gk[1:], gk[:-1], out=first[1:])
-    gid = np.cumsum(first) - 1
-    n_groups = int(gid[-1]) + 1
-
+    del gk
     starts = np.flatnonzero(first)
+    n_groups = len(starts)
+
     counts = np.diff(np.append(starts, n))
     rank_sorted = np.arange(n, dtype=np.int64) - np.repeat(starts, counts)
 
     best = vv[starts]
-    second = np.full(n_groups, -np.inf, dtype=np.float64)
+    second = np.full(n_groups, -np.inf, dtype=np.float32)
     has_second = counts > 1
     second[has_second] = vv[starts[has_second] + 1]
 
@@ -141,11 +148,13 @@ def _group_max_excluding_self(group_key: np.ndarray, value: np.ndarray,
     if n == 0:
         return best_other, n_other
 
+    value = np.asarray(value, dtype=np.float32)
     order = np.argsort(group_key, kind="stable")
     gk = group_key[order]
     first = np.empty(n, dtype=bool)
     first[0] = True
     np.not_equal(gk[1:], gk[:-1], out=first[1:])
+    del gk
     starts = np.flatnonzero(first)
     counts = np.diff(np.append(starts, n))
 
@@ -185,7 +194,8 @@ def build_graph_features(q_row: np.ndarray, c_row: np.ndarray, p1: np.ndarray,
                          cand_postal_code: np.ndarray,
                          cand_digit_code: np.ndarray,
                          cand_skel_code: np.ndarray,
-                         cfg: GraphConfig) -> np.ndarray:
+                         cfg: GraphConfig,
+                         out: np.ndarray | None = None) -> np.ndarray:
     """Compute the ``(n_pairs, N_GRAPH_FEATURES)`` graph design matrix.
 
     Parameters
@@ -201,7 +211,7 @@ def build_graph_features(q_row: np.ndarray, c_row: np.ndarray, p1: np.ndarray,
         skeleton. Zero means "absent", and absent keys never form a corroboration group.
     """
     n = len(q_row)
-    G = np.zeros((n, N_GRAPH_FEATURES), dtype=np.float32)
+    G = out if out is not None else np.zeros((n, N_GRAPH_FEATURES), dtype=np.float32)
     if n == 0:
         return G
     F = GRAPH_INDEX
@@ -213,7 +223,7 @@ def build_graph_features(q_row: np.ndarray, c_row: np.ndarray, p1: np.ndarray,
 
     # ---------------------------------------------------------------- competition ----
     if cfg.enable_competition:
-        cnt, rank, best, second = _group_stats(c_row.astype(np.int64), lg.astype(np.float64))
+        cnt, rank, best, second = _group_stats(np.asarray(c_row, np.int64), lg)
         G[:, F["compete_count"]] = cnt
         G[:, F["compete_rank"]] = rank
         G[:, F["compete_is_best"]] = (rank == 0).astype(np.float32)
@@ -228,14 +238,15 @@ def build_graph_features(q_row: np.ndarray, c_row: np.ndarray, p1: np.ndarray,
         # column softmax with a null dustbin -- the probabilistic projection of the
         # one-parent-per-candidate constraint
         tau = max(cfg.softmax_temperature, 1e-3)
-        z = np.exp(np.clip((lg - best) / tau, -60.0, 0.0))          # shifted for stability
+        z = np.exp(np.clip((lg - best) / tau, -60.0, 0.0)).astype(np.float32)  # stable
         denom = np.zeros(int(c_row.max()) + 2, dtype=np.float64)
         np.add.at(denom, c_row, z)
         null_term = np.exp(np.clip((cfg.null_logit - best) / tau, -60.0, 30.0))
         G[:, F["compete_softmax"]] = (z / (denom[c_row] + null_term)).astype(np.float32)
 
     # ---------------------------------------------------------- entity-side profile ----
-    e_cnt, e_rank, e_best, _ = _group_stats(q_row.astype(np.int64), p1.astype(np.float64))
+    q_row = np.asarray(q_row, np.int64)
+    e_cnt, e_rank, e_best, _ = _group_stats(q_row, p1)
     G[:, F["entity_cand_count"]] = e_cnt
     G[:, F["entity_p_rank"]] = e_rank
     G[:, F["entity_p_max"]] = e_best
@@ -244,11 +255,13 @@ def build_graph_features(q_row: np.ndarray, c_row: np.ndarray, p1: np.ndarray,
     np.add.at(p_sum, q_row, p1)
     G[:, F["entity_p_sum"]] = p_sum[q_row].astype(np.float32)
     G[:, F["entity_p_mean"]] = (p_sum[q_row] / np.maximum(e_cnt, 1)).astype(np.float32)
+    del p_sum
 
     # rank within the entity *and* within the candidate's own source: |T| is distributed
     # across both sources (0-5 from S2, 0-6 from S3), so per-source rank is informative
-    src_key = q_row.astype(np.int64) * 4 + cand_src.astype(np.int64)
-    s_cnt, s_rank, s_best, _ = _group_stats(src_key, p1.astype(np.float64))
+    src_key = q_row * 4 + cand_src.astype(np.int64)
+    s_cnt, s_rank, s_best, _ = _group_stats(src_key, p1)
+    del src_key
     G[:, F["entity_rank_in_source"]] = s_rank
     G[:, F["entity_source_p_max"]] = s_best
 
@@ -257,27 +270,29 @@ def build_graph_features(q_row: np.ndarray, c_row: np.ndarray, p1: np.ndarray,
         is_s2 = cand_src == 2
         other_is_s2 = ~is_s2
         # "best probability among this entity's candidates from the *other* source"
-        other_key = q_row.astype(np.int64)
-        b2, n2 = _group_max_excluding_self(other_key, p1, other_is_s2)
-        b3, n3 = _group_max_excluding_self(other_key, p1, is_s2)
+        b2, n2 = _group_max_excluding_self(q_row, p1, other_is_s2)
+        b3, n3 = _group_max_excluding_self(q_row, p1, is_s2)
         G[:, F["other_source_best_p"]] = np.where(is_s2, b2, b3)
         G[:, F["other_source_count"]] = np.where(is_s2, n2, n3)
+        del b2, n2, b3, n3
 
         for key_arr, cnt_name, best_name in (
                 (cand_postal_code, "corr_postal_count", "corr_postal_best_other_p"),
                 (cand_digit_code, "corr_digit_count", "corr_digit_best_other_p"),
                 (cand_skel_code, "corr_skel_count", "corr_skel_best_other_p")):
             present = key_arr != 0
-            gk = q_row.astype(np.int64) * np.int64(1 << 21) + (
+            gk = q_row * np.int64(1 << 21) + (
                 key_arr.astype(np.int64) % np.int64((1 << 21) - 1))
             # candidates without the key get a unique group so they never corroborate
             gk = np.where(present, gk, -(np.arange(n, dtype=np.int64) + 1))
-            elig = present & np.ones(n, dtype=bool)
-            bo, no = _group_max_excluding_self(gk, p1, elig)
+            bo, no = _group_max_excluding_self(gk, p1, present)
+            del gk
             G[:, F[cnt_name]] = no
             G[:, F[best_name]] = bo
+            del bo, no
 
-    return np.nan_to_num(G, nan=0.0, posinf=30.0, neginf=-30.0)
+    np.nan_to_num(G, copy=False, nan=0.0, posinf=30.0, neginf=-30.0)
+    return G
 
 
 # --------------------------------------------------------------------------------------
